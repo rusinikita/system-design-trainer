@@ -3,31 +3,29 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/rusinikita/system-design-trainer/med-care-app-cache/db"
 	"github.com/rusinikita/system-design-trainer/med-care-app-cache/model"
+	"github.com/rusinikita/system-design-trainer/tooling/metrics"
 	"golang.org/x/sync/errgroup"
 	"time"
 )
 
 type Handler struct {
-	repo *db.DashboardRepository
+	repo DashboardRepository
+	obs  metrics.Obs
 }
 
-func NewHandler(repo *db.DashboardRepository) *Handler {
-	return &Handler{repo}
+func NewHandler(repo DashboardRepository, obs metrics.Obs) *Handler {
+	return &Handler{
+		repo: repo,
+		obs:  obs,
+	}
 }
 
 func (h *Handler) UserDashboard(ctx context.Context, userID int64, publishedFrom *time.Time, limit int) (*model.FeedResponse, error) {
-	startTime := time.Now()
+	mainSpan := h.obs.StartSpan("UserDashboard")
 	var err error
 	defer func() {
-		status := "400"
-		if err != nil {
-			status = "500"
-		}
-		duration := time.Since(startTime).Seconds()
-		httpRequestsTotal.WithLabelValues("feed", status).Inc()
-		httpRequestDuration.WithLabelValues("feed", status).Observe(duration)
+		mainSpan.Done(err)
 	}()
 
 	// Create context with timeout
@@ -42,9 +40,9 @@ func (h *Handler) UserDashboard(ctx context.Context, userID int64, publishedFrom
 
 	// Get articles
 	g.Go(func() error {
-		startOp := time.Now()
+		op := h.obs.StartSpan("GetArticleFeed")
 		articles, err := h.repo.GetArticleFeed(ctx, userID, limit, publishedFrom)
-		dbOperationDuration.WithLabelValues("get_article_feed").Observe(time.Since(startOp).Seconds())
+		op.Done(err)
 		if err != nil {
 			return err
 		}
@@ -54,9 +52,9 @@ func (h *Handler) UserDashboard(ctx context.Context, userID int64, publishedFrom
 
 	// Get care plan steps
 	g.Go(func() error {
-		startOp := time.Now()
+		op := h.obs.StartSpan("GetLatestCarePlanSteps")
 		steps, err := h.repo.GetLatestCarePlanSteps(ctx, userID)
-		dbOperationDuration.WithLabelValues("get_care_plan_steps").Observe(time.Since(startOp).Seconds())
+		op.Done(err)
 		if err != nil {
 			return err
 		}
